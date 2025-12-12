@@ -1,0 +1,49 @@
+{
+  "project_info": {
+    "project_number": "299983990298",
+    "firebase_url": "https://monitoring-system-f9f8a-default-rtdb.asia-southeast1.firebasedatabase.app",
+    "project_id": "monitoring-system-f9f8a",
+    "storage_bucket": "monitoring-system-f9f8a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:299983990298:android:616d4e546f4dcb40a9eba3",
+        "android_client_info": {
+          "package_name": "com.example.iotmonitoring"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBI2AlGaxUPUwkD7RBncFqw6P0t8xQ4TyI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    },
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:299983990298:android:0cf6d14c6729dbbca9eba3",
+        "android_client_info": {
+          "package_name": "com.example.myapplication"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBI2AlGaxUPUwkD7RBncFqw6P0t8xQ4TyI"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
