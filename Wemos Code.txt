@@ -1,0 +1,196 @@
+#include <ESP8266WiFi.h>
+#include <WiFiClientSecure.h>
+#include <SoftwareSerial.h>
+#include <NTPClient.h>
+#include <WiFiUdp.h>
+
+// --- SoftwareSerial to Arduino ---
+SoftwareSerial sensorSerial(D7, D6); // RX = D7, TX = D6 (TX unused)
+
+// --- Variables ---
+float temperature = 0;
+float humidity = 0;
+int lightValue = 0;
+
+// --- WiFi & Firebase ---
+const char* ssid = "xxxx";
+const char* password = "xxxxx";
+const char* firebaseHost = "xxxxxx";
+String firebaseSecret = "xxxxxxxxxxxxxxxxxxxxxxx";
+WiFiClientSecure client;
+
+// --- LDR ---
+int ldrPin = A0;
+
+// --- NTP ---
+WiFiUDP ntpUDP;
+NTPClient timeClient(ntpUDP, "pool.ntp.org", 8 * 3600, 60000);
+
+// --- GET upload_enabled from Firebase ---
+bool getUploadEnabled() {
+    WiFiClientSecure ctrlClient;
+    ctrlClient.setInsecure();
+
+    String url = "/control/upload_enabled.json?auth=" + firebaseSecret;
+
+    if (!ctrlClient.connect(firebaseHost, 443)) {
+        Serial.println("Failed to connect for control flag");
+        return true; // default to true for safety
+    }
+
+    ctrlClient.println("GET " + url + " HTTP/1.1");
+    ctrlClient.println("Host: " + String(firebaseHost));
+    ctrlClient.println("Connection: close");
+    ctrlClient.println();
+
+    String response = "";
+    while (ctrlClient.connected() || ctrlClient.available()) {
+        if (ctrlClient.available()) {
+            response += ctrlClient.readString();
+        }
+    }
+
+    ctrlClient.stop();
+
+    int bodyStart = response.indexOf("\r\n\r\n");
+    if (bodyStart == -1) return true;
+
+    String body = response.substring(bodyStart + 4);
+
+    body.trim();
+    if (body == "true") return true;
+    if (body == "false") return false;
+
+    return true;
+}
+
+// --- Format timestamp ---
+String getFormattedTime(unsigned long epoch) {
+    unsigned long rawTime = epoch;
+    int second = rawTime % 60;
+    rawTime /= 60;
+    int minute = rawTime % 60;
+    rawTime /= 60;
+    int hour = rawTime % 24;
+    rawTime /= 24;
+    int days = rawTime;
+    int year = 1970;
+    while (days >= 365) {
+        if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) {
+            if (days >= 366) { days -= 366; year++; } else break;
+        } else { days -= 365; year++; }
+    }
+    int monthDays[] = {31,28,31,30,31,30,31,31,30,31,30,31};
+    if ((year % 4 == 0 && year % 100 != 0) || (year % 400 == 0)) monthDays[1] = 29;
+    int month = 0;
+    while (days >= monthDays[month]) { days -= monthDays[month]; month++; }
+    int day = days + 1;
+    char dateTime[25];
+    sprintf(dateTime, "%04d-%02d-%02d %02d:%02d:%02d", year, month+1, day, hour, minute, second);
+    return String(dateTime);
+}
+
+void setup() {
+    Serial.begin(115200);
+    sensorSerial.begin(9600);
+    delay(500);
+
+    Serial.println("Connecting to WiFi...");
+    WiFi.begin(ssid, password);
+    while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+    Serial.println("\nWiFi connected!");
+
+    client.setInsecure();
+    timeClient.begin();
+}
+
+void loop() {
+    unsigned long loopStart = millis();
+
+    // --- Step 1: Request Arduino Data ---
+    sensorSerial.println("READ");   // ask Arduino for new reading
+    delay(50);                      // small wait for Arduino to respond
+
+    if (sensorSerial.available()) {
+        String input = sensorSerial.readStringUntil('\n');
+
+        if (input == "ERR") {
+            temperature = 0;
+            humidity = 0;
+        } else {
+            int commaIndex = input.indexOf(',');
+            if (commaIndex > 0) {
+                temperature = input.substring(0, commaIndex).toFloat();
+                humidity = input.substring(commaIndex + 1).toFloat();
+            }
+        }
+    }
+
+
+    // --- Step 2: Read LDR ---
+    lightValue = analogRead(ldrPin);
+
+    // --- Step 3: Check upload_enabled ---
+    bool uploadEnabled = getUploadEnabled();
+    Serial.print("Upload Enabled: ");
+    Serial.println(uploadEnabled ? "true" : "false");
+
+    // --- Short-term fix: ignore humidity > 100% ---
+// --- Step 1.5: Apply sanity filters ---
+    if (humidity < 0 || humidity > 100) {
+        Serial.println("Invalid humidity detected. Skipping update.");
+        delay(2000);
+        return;
+    }
+
+    if (temperature < -40 || temperature > 80) {
+        Serial.println("Invalid temperature detected. Skipping update.");
+        delay(2000);
+        return;
+    }
+
+
+    if (!uploadEnabled) {
+        Serial.println("Upload disabled. Skipping upload...");
+        Serial.println("-----------------------------");
+        delay(2000);
+        return;
+    }
+
+    // --- Step 4: Timestamp ---
+    timeClient.update();
+    String dateTime = getFormattedTime(timeClient.getEpochTime());
+
+    // --- Step 5: Prepare JSON ---
+    String json = "{";
+    json += "\"temperature\":" + String(temperature) + ",";
+    json += "\"humidity\":" + String(humidity) + ",";
+    json += "\"light\":" + String(lightValue) + ",";
+    json += "\"timestamp\":\"" + dateTime + "\"";
+    json += "}";
+
+    // --- Step 6: Upload ---
+    String url = "/readings.json?auth=" + firebaseSecret;
+    if (client.connect(firebaseHost, 443)) {
+        client.println("POST " + url + " HTTP/1.1");
+        client.println("Host: " + String(firebaseHost));
+        client.println("Content-Type: application/json");
+        client.print("Content-Length: ");
+        client.println(json.length());
+        client.println();
+        client.println(json);
+
+        while (client.available()) Serial.println(client.readString());
+        client.stop();
+        Serial.println("Upload done.");
+    } else {
+        Serial.println("Connection failed");
+    }
+
+    Serial.println("-----------------------------");
+
+    // --- Keep 2-second loop time ---
+    unsigned long loopDuration = millis() - loopStart;
+    if (loopDuration < 2000) delay(2000 - loopDuration);
+}
+
